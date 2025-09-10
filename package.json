@@ -1,0 +1,29 @@
+{
+  "name": "dropin-request",
+  "version": "1.0.0",
+  "description": "A drop-in replacement for request and request-promise-native using native fetch (Node.js 18+)",
+  "main": "dropinRequest.js",
+  "exports": "./dropinRequest.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mannyvergel/dropin-request.git"
+  },
+  "author": "Manny Vergel",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.7.0"
+  },
+  "keywords": [
+    "request",
+    "fetch",
+    "drop-in",
+    "request-promise-native",
+    "http",
+    "promise",
+    "callback"
+  ],
+  "bugs": {
+    "url": "https://github.com/mannyvergel/dropin-request/issues"
+  },
+  "homepage": "https://github.com/mannyvergel/dropin-request#readme"
+}
