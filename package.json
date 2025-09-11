@@ -25,5 +25,11 @@
   "bugs": {
     "url": "https://github.com/mannyvergel/dropin-request/issues"
   },
-  "homepage": "https://github.com/mannyvergel/dropin-request#readme"
+  "homepage": "https://github.com/mannyvergel/dropin-request#readme",
+  "devDependencies": {
+    "mocha": "^10.0.0"
+  },
+  "scripts": {
+    "test": "mocha test.js"
+  }
 }

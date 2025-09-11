@@ -1,68 +1,136 @@
-// DropinRequest.js
-// Drop-in replacement for 'request' and 'request-promise-native'
-// Supports callback and promise usage
+// dropinRequest.js (drop-in replacement for request / request-promise-native)
+class DropinRequest {
+  constructor(defaultOptions = {}) {
+    this.defaults = defaultOptions;
+  }
 
-// Drop-in replacement for 'request' and 'request-promise-native' using native fetch (only tested with Node.js v20+)
-function dropinRequest(uri, options, callback) {
-    if (typeof options === 'function') {
-        callback = options;
-        options = {};
+  async _fetchWrapper(options) {
+    options = this._normalizeOptions(options);
+    let url = options.url || options.uri;
+    if (!url) throw new Error("URL is required");
+
+    // Handle qs (query string) option
+    if (options.qs && typeof options.qs === 'object') {
+      const qs = new URLSearchParams(options.qs).toString();
+      url += (url.includes('?') ? '&' : '?') + qs;
     }
-    options = options || {};
-    let url = uri;
-    if (typeof uri === 'object') {
-        options = { ...uri };
-        url = options.url || options.uri;
+
+    // Merge headers: defaults.headers < options.headers
+    const headers = { ...(this.defaults.headers || {}), ...(options.headers || {}) };
+
+    let body = undefined;
+    if (options.form) {
+      body = new URLSearchParams(options.form);
+      if (!headers['content-type'] && !headers['Content-Type']) {
+        headers['Content-Type'] = 'application/x-www-form-urlencoded';
+      }
+    } else if (options.json && options.body && typeof options.body === 'object') {
+      body = JSON.stringify(options.body);
+      if (!headers['content-type'] && !headers['Content-Type']) {
+        headers['Content-Type'] = 'application/json';
+      }
+    } else if (options.body !== undefined) {
+      body = options.body;
     }
+
     const fetchOptions = {
-        method: options.method || 'GET',
-        headers: options.headers || {},
-        body: options.body,
-        // credentials, etc. can be added if needed
+      method: options.method || this.defaults.method || "GET",
+      headers,
+      body,
+      // ...other fetch options from defaults
+      ...this.defaults,
     };
-    // Remove undefined body for GET/HEAD
-    if ((fetchOptions.method === 'GET' || fetchOptions.method === 'HEAD') && fetchOptions.body === undefined) {
-        delete fetchOptions.body;
+    // Remove headers from defaults to avoid duplication
+    delete fetchOptions.headers;
+
+    const res = await fetch(url, fetchOptions);
+
+    const contentType = res.headers.get("content-type") || "";
+    let parsedBody = "";
+    try {
+      if (options.json) {
+        parsedBody = await res.json();
+      } else {
+        parsedBody = await res.text();
+      }
+    } catch (e) {
+      console.error("Error parsing body:", e);
     }
-    const doFetch = async () => {
-        try {
-            const res = await fetch(url, fetchOptions);
-            const contentType = res.headers.get('content-type') || '';
-            let body;
-            let isJson = false;
-            if (options.json || contentType.includes('application/json')) {
-                try {
-                    body = await res.json();
-                    isJson = true;
-                } catch (e) {
-                    // fallback to text if JSON parse fails
-                    body = await res.text();
-                }
-            } else {
-                body = await res.text();
-            }
-            // Mimic request's response object
-            res.body = body;
-            if (callback) {
-                callback(null, res, body);
-            }
-            return body;
-        } catch (err) {
-            if (callback) {
-                callback(err);
-            }
-            throw err;
-        }
+
+    const response = {
+      statusCode: res.status,
+      headers: Object.fromEntries(res.headers.entries()),
+      url: res.url,
+      body: parsedBody,
     };
-    // Always return a promise
-    return doFetch();
+
+    // Error handling for non-2xx status
+    if (!res.ok) {
+      return { error: new Error(`Request failed with status ${res.status}`), response, body: parsedBody };
+    }
+
+    return { error: null, response, body: parsedBody };
+  }
+
+  request(options, callback) {
+    const exec = this._fetchWrapper(options);
+
+    if (typeof callback === "function") {
+      exec.then(({ error, response, body }) => callback(error, response, body))
+          .catch((err) => callback(err, null, null));
+      return;
+    }
+
+    // Promise style
+    return exec.then(({ body }) => body);
+  }
+
+  _normalizeOptions(options) {
+    return typeof options === "string" ? { url: options } : options;
+  }
+
+  get(options, callback) {
+    options = this._normalizeOptions(options);
+    options.method = "GET";
+    return this.request(options, callback);
+  }
+
+  post(options, callback) {
+    options = this._normalizeOptions(options);
+    options.method = "POST";
+    return this.request(options, callback);
+  }
+
+  put(options, callback) {
+    options = this._normalizeOptions(options);
+    options.method = "PUT";
+    return this.request(options, callback);
+  }
+
+  delete(options, callback) {
+    options = this._normalizeOptions(options);
+    options.method = "DELETE";
+    return this.request(options, callback);
+  }
+
+  static defaults(defaultOptions) {
+    return new DropinRequest(defaultOptions);
+  }
 }
 
-// request-promise-native compatibility
-dropinRequest.defaults = () => dropinRequest;
-dropinRequest.get = (uri, options, cb) => dropinRequest(uri, { ...options, method: 'GET' }, cb);
-dropinRequest.post = (uri, options, cb) => dropinRequest(uri, { ...options, method: 'POST' }, cb);
-dropinRequest.put = (uri, options, cb) => dropinRequest(uri, { ...options, method: 'PUT' }, cb);
-dropinRequest.delete = (uri, options, cb) => dropinRequest(uri, { ...options, method: 'DELETE' }, cb);
+// export as a callable function, like the original request
+function createRequest(defaults = {}) {
+  const req = new DropinRequest(defaults);
+  const bound = req.request.bind(req);
 
-module.exports = dropinRequest;
+  // attach methods
+  bound.get = req.get.bind(req);
+  bound.post = req.post.bind(req);
+  bound.put = req.put.bind(req);
+  bound.delete = req.delete.bind(req);
+  bound.defaults = DropinRequest.defaults;
+
+  return bound;
+}
+
+module.exports = createRequest();
