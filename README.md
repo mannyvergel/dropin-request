@@ -115,7 +115,7 @@ Minimal to no code changes required 🚀
 
 ## ⚠️ Limitations & Contributions
 
-This project is **not a 100% comprehensive replacement** for every feature of the original `request` library (e.g. streaming, advanced options). It covers the most common use cases and aims to make migration as painless as possible.
+This project is **not a 100% comprehensive replacement** for every feature of the original `request` library (e.g. multi-part and other advanced options). It covers the most common use cases and aims to make migration as painless as possible.
 
 If you find missing features or want to enhance compatibility, **contributions are very welcome!**
 Feel free to open an issue or submit a pull request on [GitHub](https://github.com/mannyvergel/dropin-request).
