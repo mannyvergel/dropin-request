@@ -198,7 +198,7 @@ function createRequestInstance(defaultOptions = {}) {
 
     const finalOptions = { ...defaultOptions, ...opts };
     
-    // >> JAR SUPPORT: Determine which jar to use for this request
+    // JAR SUPPORT: Determine which jar to use for this request
     let activeJar = null;
     if (finalOptions.jar === true) {
       if (!instanceJar) {
@@ -271,6 +271,10 @@ function createRequestInstance(defaultOptions = {}) {
       return mainRequest(opts, callback);
     };
   });
+
+  mainRequest.jar = () => {
+    return new tough.CookieJar();
+  };
 
   mainRequest.defaults = (newDefaults) => {
     const currentDefaults = JSON.parse(JSON.stringify(defaultOptions));

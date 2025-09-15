@@ -1,6 +1,6 @@
 {
   "name": "dropin-request",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "A drop-in replacement for request and request-promise-native using native fetch (Node.js 18+)",
   "main": "dropin-request.js",
   "exports": "./dropin-request.js",
