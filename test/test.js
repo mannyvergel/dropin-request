@@ -2,6 +2,7 @@ const assert = require('assert');
 const request = require('../'); // Assuming the library is in the parent directory
 const fs = require('fs');
 const path = require('path');
+const tough = require('tough-cookie');
 
 describe('dropin-request', function() {
   this.timeout(10000); // Allow for network latency
@@ -156,5 +157,52 @@ describe('dropin-request', function() {
     });
     assert.strictEqual(body.headers['X-Default-Header'], 'DefaultValue');
   });
+
+  describe('Cookie Jar (jar option)', function() {
+    it('should persist cookies when using .defaults({ jar: true })', async function() {
+      const session = request.defaults({ jar: true, json: true });
+
+      // First, set a cookie using an endpoint that doesn't redirect.
+      await session.get('https://httpbin.org/response-headers?Set-Cookie=session_cookie=abcdef');
+
+      // Then, make a request to see if the cookie is sent back.
+      const body = await session.get('https://httpbin.org/cookies');
+      
+      assert.deepStrictEqual(body.cookies, { session_cookie: 'abcdef' });
+    });
+
+    it('should use a provided custom cookie jar', async function() {
+      const customJar = new tough.CookieJar();
+
+      await request({
+        url: 'https://httpbin.org/response-headers?Set-Cookie=custom=true',
+        jar: customJar,
+      });
+
+      const body = await request({
+        url: 'https://httpbin.org/cookies',
+        jar: customJar,
+        json: true,
+      });
+
+      assert.deepStrictEqual(body.cookies, { custom: 'true' });
+    });
+
+    it('should support cookie jars in callback mode', function(done) {
+      const session = request.defaults({ jar: true });
+
+      session.get('https://httpbin.org/response-headers?Set-Cookie=callback_cookie=works', (err) => {
+        assert.ifError(err);
+        
+        session.get('https://httpbin.org/cookies', (err, res, body) => {
+          assert.ifError(err);
+          const data = JSON.parse(body);
+          assert.deepStrictEqual(data.cookies, { callback_cookie: 'works' });
+          done();
+        });
+      });
+    });
+  });
+
 
 });

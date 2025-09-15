@@ -7,13 +7,14 @@
  */
 
 const { PassThrough, Readable } = require('stream');
+const tough = require('tough-cookie');
 
 /**
  * Translates request-style options into options compatible with the native fetch API.
  * @param {object} options - The request-style options.
  * @returns {object} An object with { url, ...fetchOptions }.
  */
-function translateOptions(options) {
+async function translateOptions(options, jar) {
   const fetchOptions = {
     method: (options.method || 'GET').toUpperCase(),
     headers: { ...(options.headers || {}) },
@@ -28,6 +29,14 @@ function translateOptions(options) {
   let url = options.url || options.uri;
   if (!url) {
     throw new Error('URL is required.');
+  }
+
+  // Handle jar option
+  if (jar) {
+    const cookieString = await jar.getCookieString(url);
+    if (cookieString) {
+      fetchOptions.headers['Cookie'] = cookieString;
+    }
   }
 
   if (options.auth) {
@@ -93,9 +102,10 @@ async function consumeBody(res, options) {
  * It manages the fetch lifecycle, deciding whether to stream or buffer the response.
  */
 class DropinRequest extends PassThrough {
-  constructor(options) {
+  constructor(options, jar) {
     super();
     this._options = options;
+    this._jar = jar; // Store the jar for this request
     this._isPiped = false;
 
     this._promise = new Promise((resolve, reject) => {
@@ -123,44 +133,40 @@ class DropinRequest extends PassThrough {
     return this._promise.finally(onFinally);
   }
   
-  _init() {
+  async _init() {
     try {
-      const { url, ...fetchOptions } = translateOptions(this._options);
+      const { url, ...fetchOptions } = await translateOptions(this._options, this._jar);
+      const res = await fetch(url, fetchOptions);
 
-      fetch(url, fetchOptions)
-        .then(res => {
-          this.emit('response', res);
-          // If the status is a 4xx or 5xx, we treat it as an error.
-          if (!res.ok) {
-            // Consume the body, create a rich error, and throw it to trigger the .catch() block.
-            return consumeBody(res, this._options).then(body => {
-              const err = new Error(`HTTP Error: ${res.status} ${res.statusText}`);
-              err.statusCode = res.status;
-              err.response = res;
-              err.error = body;
-              err.options = this._options;
-              throw err;
-            });
-          }
+      // JAR support
+      if (this._jar) {
+        const setCookieHeader = res.headers.get('set-cookie');
+        if (setCookieHeader) {
+          await this._jar.setCookie(setCookieHeader, url);
+        }
+      }
+      
+      this.emit('response', res);
 
-          // If the status is OK, handle the success path.
-          if (this._isPiped) {
-            Readable.fromWeb(res.body).pipe(this);
-            return res;
-          } else {
-            return consumeBody(res, this._options);
-          }
-        })
-        .then(bodyOrResponse => {
-          this._promiseResolver(bodyOrResponse);
-        })
-        .catch(err => {
-          // This is the SINGLE failure handler. It catches network errors and thrown HTTP errors.
-          this._promiseRejector(err);
-          this.emit('error', err);
-        });
+      if (!res.ok) {
+        const body = await consumeBody(res, this._options);
+        const err = new Error(`HTTP Error: ${res.status} ${res.statusText}`);
+        err.statusCode = res.status;
+        err.response = res;
+        err.error = body;
+        err.options = this._options;
+        throw err;
+      }
+
+      // If the status is OK, handle the success path.
+      if (this._isPiped) {
+        Readable.fromWeb(res.body).pipe(this);
+        this._promiseResolver(res);
+      } else {
+        const body = await consumeBody(res, this._options);
+        this._promiseResolver(body);
+      }
     } catch (err) {
-      // This handles synchronous errors.
       this._promiseRejector(err);
       this.emit('error', err);
     }
@@ -173,6 +179,9 @@ class DropinRequest extends PassThrough {
  * @returns {Function} A request function instance.
  */
 function createRequestInstance(defaultOptions = {}) {
+  // A persistent jar for this specific instance, created on-demand.
+  let instanceJar = null;
+
   const mainRequest = function(uri, options, callback) {
     let opts = {};
     if (typeof uri === 'object' && uri !== null) {
@@ -188,43 +197,58 @@ function createRequestInstance(defaultOptions = {}) {
     }
 
     const finalOptions = { ...defaultOptions, ...opts };
+    
+    // >> JAR SUPPORT: Determine which jar to use for this request
+    let activeJar = null;
+    if (finalOptions.jar === true) {
+      if (!instanceJar) {
+        instanceJar = new tough.CookieJar();
+      }
+      activeJar = instanceJar;
+    } else if (finalOptions.jar) {
+      activeJar = finalOptions.jar;
+    }
 
     if (typeof callback === 'function') {
-      let responseForCallback;
-      try {
-           const { url, ...fetchOptions } = translateOptions(finalOptions);
+      // Use an async IIFE to allow await within the callback pattern
+      (async () => {
+        let responseForCallback;
+        try {
+          const { url, ...fetchOptions } = await translateOptions(finalOptions, activeJar);
+          const res = await fetch(url, fetchOptions);
 
-           fetch(url, fetchOptions)
-              .then(res => {
-                responseForCallback = {
-                  statusCode: res.status,
-                  headers: Object.fromEntries(res.headers.entries())
-                };
-                return consumeBody(res, finalOptions);
-              })
-              .then(body => {
-                responseForCallback.body = body;
-                if (responseForCallback.statusCode >= 400) {
-                  const err = new Error(`HTTP Error ${responseForCallback.statusCode}`);
-                  err.response = responseForCallback;
-                  callback(err, responseForCallback, body);
-                } else {
-                  callback(null, responseForCallback, body);
-                }
-              })
-              .catch(err => {
-                callback(err, responseForCallback || null, null);
-              });
-      } catch (err) {
-        callback(err, null, null);
-      }
-     
+          if (activeJar) {
+            const setCookieHeader = res.headers.get('set-cookie');
+            if (setCookieHeader) {
+              await activeJar.setCookie(setCookieHeader, url);
+            }
+          }
+
+          responseForCallback = {
+            statusCode: res.status,
+            headers: Object.fromEntries(res.headers.entries())
+          };
+          
+          const body = await consumeBody(res, finalOptions);
+          responseForCallback.body = body;
+
+          if (!res.ok) {
+            const err = new Error(`HTTP Error ${responseForCallback.statusCode}`);
+            err.response = responseForCallback;
+            callback(err, responseForCallback, body);
+          } else {
+            callback(null, responseForCallback, body);
+          }
+        } catch (err) {
+          callback(err, responseForCallback || null, null);
+        }
+      })();
       return;
     }
 
-    return new DropinRequest(finalOptions);
+    return new DropinRequest(finalOptions, activeJar);
   };
-
+  
   const methods = ['get', 'post', 'put', 'delete', 'patch', 'head', 'options'];
   methods.forEach(method => {
     mainRequest[method] = function(uri, options, callback) {

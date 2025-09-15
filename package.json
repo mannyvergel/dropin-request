@@ -1,6 +1,6 @@
 {
   "name": "dropin-request",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "A drop-in replacement for request and request-promise-native using native fetch (Node.js 18+)",
   "main": "dropin-request.js",
   "exports": "./dropin-request.js",
@@ -32,5 +32,8 @@
   },
   "scripts": {
     "test": "mocha test/test.js"
+  },
+  "dependencies": {
+    "tough-cookie": "^6.0.0"
   }
 }
